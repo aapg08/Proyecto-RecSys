@@ -1,0 +1,20 @@
+metrica,valor
+Notas creadas en la ventana,452.800
+Notas con ≥1 evaluación,392.909 (86.8%)
+Evaluadores,956.670
+Evaluaciones,35.805.619
+Densidad de la matriz,0.0095%
+Evaluaciones por nota (mediana / media / p90 / máx),30 / 91.1 / 222 / 12739
+Evaluaciones por evaluador (mediana / media / p90 / máx),7 / 37.4 / 80 / 38199
+Evaluadores con <5 evaluaciones,39.6%
+Evaluaciones en el 20% de notas más evaluadas,73.7%
+Notas con estado 'Útil',7.7%
+Notas con estado 'No útil',3.4%
+Notas con estado 'Necesita más evaluaciones',75.7%
+Notas con estado 'Sin estado',13.3%
+Notas 'Necesita más evaluaciones' con ≥86 evaluaciones (mediana de las Útiles),24.2%
+Evaluaciones HELPFUL / SOMEWHAT / NOT_HELPFUL,60.9% / 2.1% / 36.9%
+Evaluaciones dentro de 24 h desde la creación,86.5%
+Evaluaciones dentro de 7 días,97.9%
+Evaluaciones hechas después del fin de la ventana,1.1%
+"Horas hasta la primera decisión (mediana, notas decididas)",5.4
