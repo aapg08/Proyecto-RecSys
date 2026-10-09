@@ -1,7 +1,7 @@
 """
 Split temporal train/test de Community Notes, por mes de creación de la NOTA.
 
-Uso (solamente uno se debe ejecutar):
+Uso:
   python split_train_test.py          # lee data/subset/ (salida de preparar_datos.py)
   python split_train_test.py --raiz   # lee los parquet junto a este script
 
@@ -12,6 +12,7 @@ Entrada con --raiz (misma carpeta que este script):
 Salida: data/split/
   train/{notes,noteStatusHistory,ratings}.parquet
   test/{notes,noteStatusHistory,ratings}.parquet
+  resumen_split.txt   (copia de todo lo que se imprime en consola)
 
 Criterio: cada nota (y TODOS sus ratings y su historial de estado) va a un único
 lado del split, según el mes (UTC) en que fue creada la nota. Así ninguna nota de
@@ -19,6 +20,8 @@ test aparece en train, y los meses de test son posteriores a los de train.
 """
 
 import argparse
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl
@@ -26,6 +29,8 @@ import polars as pl
 # ---------------------------------------------------------------------------
 # Configuración
 # ---------------------------------------------------------------------------
+# Meses (formato "YYYY-MM") que van a TEST; el resto de los meses va a TRAIN.
+# Con enero-junio 2025 esto da ~75% train / ~25% test en notas.
 MESES_TEST = ["2025-05", "2025-06"]
 
 BASE = Path(__file__).resolve().parent
@@ -52,6 +57,7 @@ else:
 notes_path = SUBSET / "notes.parquet"
 st_path = SUBSET / "noteStatusHistory.parquet"
 
+# notes y ratings son obligatorios; noteStatusHistory es opcional (se omite con aviso)
 faltantes = []
 if not notes_path.exists():
     faltantes.append(str(notes_path))
@@ -64,11 +70,33 @@ if faltantes:
         print(f"  - {f}")
     raise SystemExit(1)
 
-print(f"Leyendo desde: {SUBSET}")
-print(f"  ratings: {len(ratings_files)} archivo(s)")
-
 for lado in ("train", "test"):
     (OUT / lado).mkdir(parents=True, exist_ok=True)
+
+
+class Tee:
+    """Escribe en consola y en un archivo a la vez."""
+
+    def __init__(self, consola, archivo):
+        self.consola, self.archivo = consola, archivo
+
+    def write(self, texto):
+        self.consola.write(texto)
+        self.archivo.write(texto)
+        self.archivo.flush()
+
+    def flush(self):
+        self.consola.flush()
+        self.archivo.flush()
+
+
+RESUMEN = OUT / "resumen_split.txt"
+sys.stdout = Tee(sys.stdout, open(RESUMEN, "w", encoding="utf-8"))
+
+print(f"Split train/test - {datetime.now():%Y-%m-%d %H:%M}")
+print(f"Leyendo desde: {SUBSET}")
+print(f"  ratings: {len(ratings_files)} archivo(s)")
+print(f"Meses de test: {MESES_TEST}\n")
 
 # ---------------------------------------------------------------------------
 # 1. Asignar cada nota a train/test según su mes de creación
@@ -162,3 +190,4 @@ for lado, df in status.items():
 
 print("=" * 50)
 print(f"Listo. Archivos en {OUT}")
+print(f"Resumen guardado en {RESUMEN}")
