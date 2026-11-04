@@ -1,0 +1,24 @@
+bloque,dato,valor
+"val (entrenamiento LTR)",evaluaciones_periodo,4007190
+"val (entrenamiento LTR)",de_evaluadores_con_historial,3539161
+"val (entrenamiento LTR)",en_ventana,3048293
+"val (entrenamiento LTR)",en_ventana_y_pendientes,2777214
+"val (entrenamiento LTR)",perdidos_por_nota_decidida,271079
+"val (entrenamiento LTR)",pct_perdidos_por_nota_decidida,0.0889
+"val (entrenamiento LTR)",eventos,40000
+"val (entrenamiento LTR)",evaluadores,37800
+"test",evaluaciones_periodo,8414916
+"test",de_evaluadores_con_historial,7247616
+"test",en_ventana,6336052
+"test",en_ventana_y_pendientes,5725771
+"test",perdidos_por_nota_decidida,610281
+"test",pct_perdidos_por_nota_decidida,0.0963
+"test",eventos,100000
+"test",evaluadores,88768
+"ltr",filas_entrenamiento,840000
+"ltr",auc_validacion,0.9366
+"ltr",iteraciones,242
+"ltr",features,log_pop log_pop_1h edad_h sim_tfidf sim_emb escritura log_hist
+"test_resumen",candidatas_mediana,1718.0000
+"test_resumen",candidatas_media,1739.5204
+"test_resumen",random_recall10_esperado,0.0059

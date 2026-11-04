@@ -1,0 +1,8 @@
+feature,importancia_auc,desv
+log_pop_1h,0.070719,0.000712
+sim_tfidf,0.057782,0.000998
+escritura,0.032283,0.003330
+log_pop,0.027063,0.001101
+edad_h,0.021245,0.000344
+sim_emb,0.005311,0.000183
+log_hist,0.004004,0.000342

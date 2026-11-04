@@ -1,0 +1,6 @@
+estado_real,pred_util,pred_no_util,pred_nmr,total,acierto
+Útil,19404,9,6520,25933,0.7482
+No útil,0,5335,5757,11092,0.4810
+Necesita más ev.,10541,5096,186771,202408,0.9227
+total,,,,239433,0.8834
+balanceado,,,,,0.7173
