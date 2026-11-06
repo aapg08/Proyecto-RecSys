@@ -1,34 +1,42 @@
 """
 Diseño del recomendador activo multiobjetivo (H2). Solo numpy/scipy (+ matplotlib para la figura).
 
-Estado de la nota en t  : posterior ridge (b_n, g_n) con los parámetros de los evaluadores congelados
-                        (postura.py).  r_v = y_v - mu - b_v = b_n + g_n f_v + eps,  eps ~ N(0, sigma2).
-Valor de pedirle el voto: V(u,n) = RIESGO(n) x G(u,n)
-    G(u,n)  = reducción RELATIVA de Var(b_n) si vota u = [(M⁻¹x)_0² / (1 + xᵀM⁻¹x)] / (M⁻¹)_00,  x=(1,f_u)
-                (es el ΔVar de midterm.py dividido por Var(b_n); depende de f_u vía la covarianza => bridging)
-    RIESGO  = prob., bajo la posterior, de que el estado terminal verdadero (CRH/CRNH) difiera del que
-                daría el punto estimado actual (reglas de X). Anula el valor de notas que no pueden decidirse.
-Afinidad calibrada      : q(n|u,t) = softmax_n( T * logit p_LTR(u,n) )  sobre las candidatas del evento
-                        (probabilidad de que u elija n entre las candidatas; T se ajusta en validación).
-Tres reglas de combinación (todas con 1 parámetro que recorre de "solo afinidad" a "solo valor"):
-    ev       score = log q + β·log(V + ε)        β=1 es la utilidad esperada  P(vota)·V ; β=0 es el LTR
-    recorte  top-M por afinidad y dentro de ese corte se ordena por V   (M=K es el LTR; M=|cand| es V puro)
-    pct      λ·pct(LTR) + (1-λ)·pct(ΔVar)        <- regla original, se mantiene como referencia
-Elección del punto de operación SIN mirar test: sobre eventos de validación NO usados para entrenar el LTR,
-se toma el parámetro que maximiza el valor medio del top-K sujeto a Recall@K >= tol · Recall@K(LTR).
-"""
+Lo usa midterm.py (ver parche). Se puede probar suelto:  python -c "import activo"
 
+PROBLEMA QUE RESUELVE (diagnóstico sobre la primera versión de midterm.py)
+  1. Mezclar por PERCENTILES tira la afinidad a la basura: entre las 10 mejores notas de ~1700 candidatas
+     el percentil del LTR varía ~0.6 %, mientras que el del término de consenso varía en [0,1]. Con λ=0.9
+     el consenso ya manda: por eso el Recall cae de 0.30 a 0.07 y la curva λ no es un compromiso real.
+  2. El término ΔVar mide solo cuánta varianza del intercepto se reduce, no si ESO IMPORTA para la decisión:
+     premia notas sin votos aunque nunca se acerquen al umbral. Solo ranking por ΔVar da Recall < Random.
+  3. No hay regla para elegir λ: se miró en test.
+
+DISEÑO
+  Estado de la nota en t  : posterior ridge (b_n, g_n) con los parámetros de los evaluadores congelados
+                            (postura.py).  r_v = y_v - mu - b_v = b_n + g_n f_v + eps,  eps ~ N(0, sigma2).
+  Valor de pedirle el voto: V(u,n) = RIESGO(n) x G(u,n)
+        G(u,n)  = reducción RELATIVA de Var(b_n) si vota u = [(M⁻¹x)_0² / (1 + xᵀM⁻¹x)] / (M⁻¹)_00,  x=(1,f_u)
+                  (es el ΔVar de midterm.py dividido por Var(b_n); depende de f_u vía la covarianza => bridging)
+        RIESGO  = prob., bajo la posterior, de que el estado terminal verdadero (CRH/CRNH) difiera del que
+                  daría el punto estimado actual (reglas de X). Anula el valor de notas que no pueden decidirse.
+  Afinidad calibrada      : q(n|u,t) = softmax_n( T * logit p_LTR(u,n) )  sobre las candidatas del evento
+                            (probabilidad de que u elija n entre las candidatas; T se ajusta en validación).
+  Tres reglas de combinación (todas con 1 parámetro que recorre de "solo afinidad" a "solo valor"):
+     ev       score = log q + β·log(V + ε)        β=1 es la utilidad esperada  P(vota)·V ; β=0 es el LTR
+     recorte  top-M por afinidad y dentro de ese corte se ordena por V   (M=K es el LTR; M=|cand| es V puro)
+     pct      λ·pct(LTR) + (1-λ)·pct(ΔVar)        <- regla original, se mantiene como referencia
+  Elección del punto de operación SIN mirar test: sobre eventos de validación NO usados para entrenar el LTR,
+  se toma el parámetro que maximiza el valor medio del top-K sujeto a Recall@K >= tol · Recall@K(LTR).
+"""
 import numpy as np
 from scipy.special import logsumexp, ndtr
 
-CRH_THR = 0.40
-CRNH_I = -0.05
-CRNH_M = -0.8
+CRH_THR, CRNH_I, CRNH_M = 0.40, -0.05, -0.8         # reglas de estado de X (note_ratings.py)
 
 
 class EstadoNotas:
-    """Estadísticos suficientes de la ridge 2x2 de cada nota. A = M y b = Σ x r."""
- 
+    """Estadísticos suficientes de la ridge 2x2 de cada nota. A = M (como en midterm.py) y b = Σ x r."""
+
     def __init__(self, n, lam_b, lam_g, sigma2, prior_scale=1.0):
         self.a00 = np.full(n, lam_b * prior_scale)
         self.a01 = np.zeros(n)
@@ -36,7 +44,7 @@ class EstadoNotas:
         self.b0 = np.zeros(n)
         self.b1 = np.zeros(n)
         self.sigma2 = sigma2
- 
+
     def add(self, g, f, r):
         """g: notas, f: postura del evaluador, r = y - mu - b_u. Solo evaluadores con postura conocida."""
         np.add.at(self.a00, g, 1.0)
@@ -44,7 +52,7 @@ class EstadoNotas:
         np.add.at(self.a11, g, f * f)
         np.add.at(self.b0, g, r)
         np.add.at(self.b1, g, f * r)
- 
+
     def posterior(self, idx):
         a, b, d = self.a00[idx], self.a01[idx], self.a11[idx]
         det = a * d - b * b
@@ -69,6 +77,10 @@ def valor_decision(est, cand, f_u):
     ganancia = (sx0 * sx0 / (est.sigma2 + xsx)) / c00
     return riesgo * ganancia, ganancia, riesgo
 
+
+# ---------------------------------------------------------------------------
+# Afinidad calibrada y reglas de combinación
+# ---------------------------------------------------------------------------
 def logit(p):
     p = np.clip(p, 1e-7, 1 - 1e-7)
     return np.log(p) - np.log1p(-p)
@@ -90,22 +102,22 @@ def pct(s):
 
 
 def puntaje(familia, param, lg, V, dvar, T=1.0, eps_rel=0.01, jit=None):
-    """Puntaje de cada candidata. lg = logit del LTR; V = valor de decisión; dvar = ΔVar original."""
+    """Puntaje de cada candidata. lg = logit del LTR; V = valor de decisión; dvar = ΔVar original (solo 'pct')."""
     jit = 0.0 if jit is None else jit
     if familia == "ltr":
         return lg + jit
-    if familia == "ev":
+    if familia == "ev":                                    # utilidad esperada generalizada
         logq = T * lg - logsumexp(T * lg)
         eps = eps_rel * float(V.mean()) + 1e-30
         return logq + param * np.log(V + eps) + jit
-    if familia == "recorte":
+    if familia == "recorte":                               # corte por afinidad y reordenar por valor
         M = int(min(param, len(lg)))
         corte = np.argpartition(-lg, M - 1)[:M] if M < len(lg) else np.arange(len(lg))
-        s = pct(lg) * 1e-3 + jit
+        s = pct(lg) * 1e-3 + jit                           # fuera del corte: orden por afinidad
         vc = V[corte]
         s[corte] = 1.0 + vc / (vc.max() + 1e-300) + 1e-6 * pct(lg)[corte]
         return s
-    if familia == "pct":
+    if familia == "pct":                                   # regla original de midterm.py
         return param * pct(lg) + (1 - param) * pct(dvar) + jit
     if familia == "valor":
         return V + jit
@@ -134,7 +146,7 @@ def barrido(eventos, configs, K, T, eps_rel, rng):
 
 
 def elegir(filas, tol):
-    """Por familia: máximo valor sujeto a recall >= tol * recall(LTR); o el de mayor recall."""
+    """Por familia: máximo valor sujeto a recall >= tol * recall(LTR); si ninguno cumple, el de mayor recall."""
     r_ltr = [f for f in filas if f["familia"] == "ltr"][0]["recall"]
     elegido = {}
     for fam in sorted({f["familia"] for f in filas} - {"ltr"}):
@@ -149,7 +161,7 @@ def elegir(filas, tol):
 
 
 def seleccionar(eventos, betas, recortes, lambdas, K, tol, eps_rel, seed=0):
-    """Calibra T, recorre las tres familias y elige el punto de operación de cada una."""
+    """Calibra T, recorre las tres familias y elige el punto de operación de cada una (solo validación)."""
     rng = np.random.default_rng(seed)
     T, ll = calibrar_T(eventos)
     configs = ([("ev", b) for b in betas] + [("recorte", m) for m in recortes] + [("pct", l) for l in lambdas])
@@ -158,7 +170,9 @@ def seleccionar(eventos, betas, recortes, lambdas, K, tol, eps_rel, seed=0):
     return dict(T=T, ll_T=ll, filas=filas, elegido=elegido, recall_ltr_val=r_ltr)
 
 
-# Figuras
+# ---------------------------------------------------------------------------
+# Figura
+# ---------------------------------------------------------------------------
 def figura_pareto(filas, curvas, K, ruta_png, ruta_pdf=None, elegidos=()):
     """filas: dicts de midterm_resultados (modelo, K, recall, valor_decision). curvas: {titulo: [modelos]}."""
     import matplotlib
@@ -175,9 +189,13 @@ def figura_pareto(filas, curvas, K, ruta_png, ruta_pdf=None, elegidos=()):
         if m in fk and "recall" in fk[m]:
             ax.plot(fk[m]["recall"], max(fk[m]["valor_decision"], 1e-8), "s", color="#898781", ms=6)
             ax.annotate(lab, (fk[m]["recall"], max(fk[m]["valor_decision"], 1e-8)), xytext=(5, -10), textcoords="offset points", fontsize=8)
-    for m in elegidos:
+    etq = elegidos if isinstance(elegidos, dict) else {m: "" for m in elegidos}
+    for m, txt in etq.items():
         if m in fk:
             ax.plot(fk[m]["recall"], max(fk[m]["valor_decision"], 1e-8), "*", color="black", ms=13, zorder=5)
+            if txt:
+                ax.annotate(txt, (fk[m]["recall"], max(fk[m]["valor_decision"], 1e-8)), xytext=(-6, -14),
+                            textcoords="offset points", fontsize=7.5, ha="right")
     if "observado" in fk:
         ax.axhline(fk["observado"]["valor_decision"], color="#eb6834", ls="--", lw=1)
         ax.text(ax.get_xlim()[0], fk["observado"]["valor_decision"], " observado", ha="left", va="top", fontsize=8, color="#eb6834")
@@ -186,7 +204,43 @@ def figura_pareto(filas, curvas, K, ruta_png, ruta_pdf=None, elegidos=()):
     ax.set_yscale("log")
     ax.set_title("Compromiso afinidad vs. valor para el consenso\n(★ = punto elegido en validación)", fontsize=10, loc="left")
     ax.grid(color="#e6e5e0", lw=0.6)
-    ax.legend(frameon=False, fontsize=8, loc="lower left")
+    ax.legend(frameon=False, fontsize=8, loc="upper right")
+    fig.tight_layout()
+    fig.savefig(ruta_png, dpi=200)
+    if ruta_pdf:
+        fig.savefig(ruta_pdf)
+    plt.close(fig)
+
+
+def figura_paneles(filas, curvas, K, ruta_png, ruta_pdf=None, elegidos=()):
+    """Mismas curvas, pero con las métricas que NO usan el riesgo de decisión: aporte a la minoría y reducción de varianza."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fk = {f["modelo"]: f for f in filas if f["K"] == K}
+    col = ["#2a78d6", "#eb6834", "#4a9d5b", "#8a5fbf"]
+    etq = elegidos if isinstance(elegidos, dict) else {m: "" for m in elegidos}
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.9))
+    for ax, met, ylab in [(axes[0], "aporte_minoria", f"Aporte al lado minoritario@{K}"),
+                          (axes[1], "reduccion_var", f"Reducción de varianza (ΔVar)@{K}")]:
+        for (tit, ms), c in zip(curvas.items(), col):
+            ms = [m for m in ms if m in fk and "recall" in fk[m]]
+            ax.plot([fk[m]["recall"] for m in ms], [fk[m][met] for m in ms], "-o", ms=4, lw=1.5, color=c, label=tit)
+        for m, lab in [("random", "Random"), ("most_popular", "Most Popular"), ("ltr", "LTR")]:
+            if m in fk and "recall" in fk[m]:
+                ax.plot(fk[m]["recall"], fk[m][met], "s", color="#898781", ms=6)
+                ax.annotate(lab, (fk[m]["recall"], fk[m][met]), xytext=(5, -10), textcoords="offset points", fontsize=8)
+        for m in etq:
+            if m in fk:
+                ax.plot(fk[m]["recall"], fk[m][met], "*", color="black", ms=13, zorder=5)
+        if "observado" in fk:
+            ax.axhline(fk["observado"][met], color="#eb6834", ls="--", lw=1)
+            ax.text(ax.get_xlim()[1], fk["observado"][met], "observado ", ha="right", va="bottom", fontsize=8, color="#eb6834")
+        ax.set_xlabel(f"Recall@{K} (afinidad)")
+        ax.set_ylabel(ylab)
+        ax.grid(color="#e6e5e0", lw=0.6)
+    axes[0].legend(frameon=False, fontsize=8, loc="upper right")
+    fig.suptitle("Las mismas curvas con métricas que no usan V (★ = punto elegido en validación)", fontsize=10, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(ruta_png, dpi=200)
     if ruta_pdf:

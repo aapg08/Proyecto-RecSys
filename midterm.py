@@ -61,6 +61,8 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as sp
 
+import activo as act
+
 BASE = Path(__file__).resolve().parent
 SPLIT = BASE / "data" / "split"
 MID = BASE / "data" / "midterm"
@@ -69,6 +71,7 @@ FIG = BASE / "figuras"
 H_MS = 3_600_000
 DIA_MS = 24 * H_MS
 URL = re.compile(r"https?://\S+")
+NIVEL = {"HELPFUL": 1.0, "SOMEWHAT_HELPFUL": 0.5, "NOT_HELPFUL": 0.0}
 T0 = time.time()
 
 
@@ -88,6 +91,15 @@ def parse_args(argv=None):
     ap.add_argument("--neg", type=int, default=20, help="negativos por evento de entrenamiento")
     ap.add_argument("--lambdas", type=float, nargs="+", default=[0.9, 0.75, 0.5, 0.25])
     ap.add_argument("--lambda-principal", type=float, default=0.5)
+    # --- recomendador activo (activo.py) ---
+    ap.add_argument("--sin-activo", action="store_true", help="no correr el diseño de activo.py (solo la versión original)")
+    ap.add_argument("--betas", type=float, nargs="+", default=[0.1, 0.25, 0.4, 0.6, 1.0, 2.0], help="exponente del valor en la regla 'ev'")
+    ap.add_argument("--recortes", type=int, nargs="+", default=[12, 15, 20, 30, 50, 100, 200], help="tamaño M del corte por afinidad ('recorte')")
+    ap.add_argument("--k-sel", type=int, default=10, help="K con que se elige el punto de operación en validación")
+    ap.add_argument("--tol-afinidad", type=float, default=0.9, help="se exige Recall@K >= tol * Recall@K del LTR")
+    ap.add_argument("--max-sel-events", type=int, default=3000, help="eventos de validación (no usados para entrenar) para elegir")
+    ap.add_argument("--eps-rel", type=float, default=0.01, help="piso relativo del valor en log(V + eps)")
+    ap.add_argument("--prior-scale", type=float, default=1.0, help="multiplica la ridge de cada nota en el estado de activo.py")
     ap.add_argument("--include-decided", action="store_true")
     ap.add_argument("--sin-embeddings", action="store_true")
     ap.add_argument("--chunk", type=int, default=400, help="eventos por lote de predicción")
@@ -136,7 +148,9 @@ class Datos:
         pl = self.pl
         return pl.scan_parquet(SPLIT / lado / "ratings.parquet").select(
             "noteId", pl.col("raterParticipantId").hash().alias("r"),
-            pl.col("createdAtMillis").cast(pl.Int64).alias("t"))
+            pl.col("createdAtMillis").cast(pl.Int64).alias("t"),
+            pl.col("helpfulnessLevel").replace_strict(NIVEL, default=None, return_dtype=pl.Float32)
+            .fill_null(float("nan")).alias("y"))
 
     def base(self):
         pl, a = self.pl, self.args
@@ -162,14 +176,14 @@ class Datos:
         r_all = pl.concat([self._ratings("train"), self._ratings("test")])
         log("leyendo evaluaciones de las notas de abril y de test...")
         stream = (r_all.join(self.gmap, on="noteId").filter(pl.col("c") >= t_val)
-                  .select("t", "g", "r").collect().sort(["t", "g", "r"]))
+                  .select("t", "g", "r", "y").collect().sort(["t", "g", "r"]))
 
         def warm(tmax):
             return np.sort(r_all.filter(pl.col("t") < tmax).group_by("r").len()
                            .filter(pl.col("len") >= a.min_train_ratings).collect()["r"].to_numpy())
 
         post = pl.read_parquet(MID / "postura_raters.parquet").select(
-            pl.col("raterParticipantId").hash().alias("r"), "f_u").sort("r")
+            pl.col("raterParticipantId").hash().alias("r"), "f_u", "b_u").sort("r")
         meta = json.loads((MID / "postura_meta.json").read_text(encoding="utf-8"))
 
         E = None
@@ -192,7 +206,8 @@ class Datos:
             s_t=stream["t"].to_numpy(), s_g=stream["g"].to_numpy().astype(np.int64),
             s_r=stream["r"].to_numpy(),
             warm_test=warm(t_split), warm_val=warm(t_val),
-            post_r=post["r"].to_numpy(), post_f=post["f_u"].to_numpy(),
+            post_r=post["r"].to_numpy(), post_f=post["f_u"].to_numpy(), post_b=post["b_u"].to_numpy(),
+            s_y=stream["y"].to_numpy(), mu=meta["mu"], sigma2=meta["rmse"] ** 2,
             lam_b=meta["mult_intercepto"] * meta["lam_n"], lam_g=meta["lam_n"], E=E,
         )
 
@@ -265,6 +280,12 @@ def experimento(D, historial, args):
     E = D["E"]
     LB, LG = D["lam_b"], D["lam_g"]
     f_stream = buscar(D["post_r"], D["post_f"], s_r)
+    ACT = not args.sin_activo
+    if ACT:      # estado posterior de cada nota con los votos de evaluadores con postura conocida (activo.py)
+        b_stream = buscar(D["post_r"], D["post_b"], s_r)
+        known = np.isin(s_r, D["post_r"]) & ~np.isnan(D["s_y"])
+        r_stream = np.where(known, D["s_y"] - D["mu"] - b_stream, 0.0)
+        est = act.EstadoNotas(N, D["lam_b"], D["lam_g"], D["sigma2"], args.prior_scale)
     log(f"notas {N:,} | val desde {np.datetime64(T_VAL, 'ms')} | test desde {np.datetime64(T_SPLIT, 'ms')}")
     log(f"evaluaciones en el flujo (abril + test): {len(s_t):,} | con postura conocida: {(f_stream != 0).mean():.1%}")
     log(f"regularización del término de consenso: lam_b = {LB:.2f}, lam_g = {LG:.2f}")
@@ -371,6 +392,9 @@ def experimento(D, historial, args):
             np.add.at(S2, gg, ff * ff)
             np.add.at(npos, gg, (ff > 0).astype(np.int64))
             np.add.at(nneg, gg, (ff < 0).astype(np.int64))
+            if ACT:
+                mk = known[ptr[0]:nuevo]
+                est.add(gg[mk], ff[mk], r_stream[ptr[0]:nuevo][mk])
             ptr[0] = nuevo
         nuevo = int(np.searchsorted(s_t, t - H_MS, "left"))
         if nuevo > ptr[1]:
@@ -422,10 +446,16 @@ def experimento(D, historial, args):
     # ---------------- 1) entrenamiento del baseline entrenado ----------------
     log(f"construyendo datos de entrenamiento del LTR ({len(ev_val):,} eventos de val)...")
     F_list, y_list, e_list = [], [], []
+    sel = []      # eventos de validación NO usados para entrenar el LTR (e % 10 == 0), con TODAS sus candidatas
     for e, k in enumerate(ev_val):
         t, tgt, r = int(s_t[k]), int(s_g[k]), s_r[k]
         avanzar(t)
         cand, pos = candidatos(t, r, g_val0, tgt)
+        if ACT and e % 10 == 0 and len(sel) < args.max_sel_events:
+            u_s = int(np.searchsorted(prof_val["users"], r))
+            f_s = float(buscar(D["post_r"], D["post_f"], np.array([r]))[0])
+            V_s = act.valor_decision(est, cand, f_s)[0]
+            sel.append(dict(F=features(cand, prof_val, u_s, t), V=V_s, dvar=consenso(cand, f_s)[0], pos=pos))
         negs = np.delete(cand, pos)
         if len(negs) == 0:
             continue
@@ -463,16 +493,47 @@ def experimento(D, historial, args):
     protocolo["ltr"] = dict(filas_entrenamiento=int(len(ytr)), auc_validacion=float(auc),
                             iteraciones=int(clf.n_iter_), features=" ".join(nombres_feat))
 
+    sel_res = None
+    if ACT:
+        lam_sel = sorted(set(args.lambdas + [0.99, 0.95]))
+        if sel:
+            Fs = np.vstack([z["F"] for z in sel])
+            ps = clf.predict_proba(Fs)[:, 1]
+            off = 0
+            for z in sel:
+                z["logit"] = act.logit(ps[off:off + len(z["V"])])
+                off += len(z["V"])
+            sel_res = act.seleccionar(sel, args.betas, args.recortes, lam_sel, args.k_sel, args.tol_afinidad,
+                                      args.eps_rel, args.seed)
+            for f_ in sel_res["filas"]:
+                log(f"   sel {f_['familia']:<8s} {f_['param']:>8.3g}  recall@{args.k_sel} {f_['recall']:.4f}  "
+                    f"valor {f_['valor']:.3e}  {'<- elegido' if f_.get('elegido') else ''}")
+        else:
+            log("AVISO: sin eventos de selección; se usan parámetros por defecto (ev β=1, recorte M=50, pct λ=0.9)")
+            sel_res = dict(T=1.0, filas=[], elegido=dict(ev=1.0, recorte=50, pct=0.9), recall_ltr_val=float("nan"))
+        el = sel_res["elegido"]
+        protocolo["activo"] = dict(eventos_seleccion=len(sel), k_sel=args.k_sel, tol_afinidad=args.tol_afinidad,
+                                   T_calibracion=sel_res["T"], beta_elegido=el["ev"], recorte_elegido=el["recorte"],
+                                   lambda_elegido=el["pct"], recall_ltr_validacion=sel_res["recall_ltr_val"])
+        log(f"punto de operación elegido en validación: ev β={el['ev']:g} | recorte M={el['recorte']:g} | pct λ={el['pct']:g} "
+            f"| T={sel_res['T']:g}")
+        del sel
+
     # ---------------- 2) evaluación en test ----------------
     lams = [lam for lam in args.lambdas if 0 < lam < 1]
     modelos = (["random", "most_popular", "content_based", "ltr", "consenso"]
                + [f"propuesto_l{lam:g}" for lam in lams])
+    if ACT:
+        modelos += (["valor"] + [f"ev_b{b:g}" for b in args.betas] + [f"recorte_M{m}" for m in args.recortes]
+                    + ["activo_ev", "activo_recorte", "activo_pct"])
     n_ev = len(ev_te)
     rank = {m: np.zeros(n_ev, np.int32) for m in modelos}
     recs = {m: np.full((n_ev, KMAX), -1, np.int32) for m in modelos}
     ap = {m: {K: np.full(n_ev, np.nan) for K in KS} for m in modelos}
     dv = {m: {K: np.full(n_ev, np.nan) for K in KS} for m in modelos}
     obs_ap, obs_dv = np.full(n_ev, np.nan), np.full(n_ev, np.nan)
+    vd = {m: {K: np.full(n_ev, np.nan) for K in KS} for m in modelos}
+    obs_vd = np.full(n_ev, np.nan)
     n_cand = np.zeros(n_ev, np.int32)
     visto = np.zeros(N, bool)
     ev_u = np.searchsorted(users_te, s_r[ev_te])
@@ -489,10 +550,11 @@ def experimento(D, historial, args):
             cand, pos = candidatos(t, r, g_test0, tgt)
             F = features(cand, prof_te, int(ev_u[e]), t)
             dvar, aporte = consenso(cand, f_ev[e])
-            lote.append((e, cand, pos, F, dvar, aporte, cnt[cand].astype(float)))
+            Vd = act.valor_decision(est, cand, f_ev[e])[0] if ACT else None
+            lote.append((e, cand, pos, F, dvar, aporte, cnt[cand].astype(float), Vd))
         proba = clf.predict_proba(np.vstack([z[3] for z in lote]))[:, 1]
         off = 0
-        for e, cand, pos, F, dvar, aporte, pop in lote:
+        for e, cand, pos, F, dvar, aporte, pop, Vd in lote:
             n = len(cand)
             p = proba[off:off + n]
             off += n
@@ -507,6 +569,18 @@ def experimento(D, historial, args):
             pa, pv = pct(sc["ltr"]), pct(sc["consenso"])
             for lam in lams:
                 sc[f"propuesto_l{lam:g}"] = lam * pa + (1 - lam) * pv + jit
+            if ACT:
+                lg, T_, ee = act.logit(p), sel_res["T"], args.eps_rel
+                sc["valor"] = Vd + jit
+                for b in args.betas:
+                    sc[f"ev_b{b:g}"] = act.puntaje("ev", b, lg, Vd, dvar, T_, ee, jit)
+                for m_ in args.recortes:
+                    sc[f"recorte_M{m_}"] = act.puntaje("recorte", m_, lg, Vd, dvar, T_, ee, jit)
+                el = sel_res["elegido"]
+                sc["activo_ev"] = act.puntaje("ev", el["ev"], lg, Vd, dvar, T_, ee, jit)
+                sc["activo_recorte"] = act.puntaje("recorte", el["recorte"], lg, Vd, dvar, T_, ee, jit)
+                sc["activo_pct"] = act.puntaje("pct", el["pct"], lg, Vd, dvar, T_, ee, jit)
+                obs_vd[e] = Vd[pos]
             con_lado = f_ev[e] != 0
             obs_dv[e] = dvar[pos]
             if con_lado:
@@ -520,6 +594,8 @@ def experimento(D, historial, args):
                 for K in KS:
                     tk = top[:K]
                     dv[m][K][e] = dvar[tk].mean()
+                    if ACT:
+                        vd[m][K][e] = Vd[tk].mean()
                     if con_lado:
                         ap[m][K][e] = aporte[tk].mean()
         if (c0 // args.chunk) % 10 == 9 or c0 + args.chunk >= n_ev:
@@ -541,33 +617,39 @@ def experimento(D, historial, args):
                             cobertura=len(np.unique(rr[rr >= 0])) / den_cov)
                 fila["recall_lo"], fila["recall_hi"] = boot_ci(hit, ev_u, B, rng_b)
                 fila["ndcg_lo"], fila["ndcg_hi"] = boot_ci(ndcg, ev_u, B, rng_b)
-                va, vd = ap[m][K], dv[m][K]
+                va, vdv, vvd = ap[m][K], dv[m][K], vd[m][K]
             else:
-                va, vd = obs_ap, obs_dv
+                va, vdv, vvd = obs_ap, obs_dv, obs_vd
             ok = ~np.isnan(va)
             fila["aporte_minoria"] = float(va[ok].mean()) if ok.any() else np.nan
             fila["aporte_lo"], fila["aporte_hi"] = boot_ci(va[ok], ev_u[ok], B, rng_b)
-            fila["reduccion_var"] = float(np.nanmean(vd))
-            fila["redvar_lo"], fila["redvar_hi"] = boot_ci(vd, ev_u, B, rng_b)
+            fila["reduccion_var"] = float(np.nanmean(vdv))
+            fila["redvar_lo"], fila["redvar_hi"] = boot_ci(vdv, ev_u, B, rng_b)
+            if ACT:
+                fila["valor_decision"] = float(np.nanmean(vvd))
+                fila["vd_lo"], fila["vd_hi"] = boot_ci(vvd, ev_u, B, rng_b)
             filas.append(fila)
     protocolo["test_resumen"] = dict(candidatas_mediana=float(np.median(n_cand)),
                                      candidatas_media=float(n_cand.mean()),
                                      random_recall10_esperado=float(np.mean(np.minimum(10, n_cand) / n_cand)))
     return dict(filas=filas, protocolo=protocolo, importancia=importancia, modelos=modelos, lams=lams,
-                rank=rank, recs=recs, n_cand=n_cand, ev_u=ev_u)
+                rank=rank, recs=recs, n_cand=n_cand, ev_u=ev_u, seleccion=sel_res)
 
 
 # ---------------------------------------------------------------------------
 # Salidas
 # ---------------------------------------------------------------------------
 COLS = ["modelo", "K", "recall", "recall_lo", "recall_hi", "ndcg", "ndcg_lo", "ndcg_hi", "cobertura",
-        "aporte_minoria", "aporte_lo", "aporte_hi", "reduccion_var", "redvar_lo", "redvar_hi"]
+        "aporte_minoria", "aporte_lo", "aporte_hi", "reduccion_var", "redvar_lo", "redvar_hi",
+        "valor_decision", "vd_lo", "vd_hi"]
 NOMBRES = {"random": "Random", "most_popular": "Most Popular", "content_based": "Content-based",
-           "ltr": "LTR (entrenado)", "consenso": "Consenso (dVar)", "observado": "Observado"}
+           "ltr": "LTR (entrenado)", "consenso": "Consenso (dVar)", "observado": "Observado",
+           "valor": "Valor V (puro)", "activo_ev": "Activo EV*", "activo_recorte": "Activo recorte*",
+           "activo_pct": "Activo pct*"}
 
 
 def nombre(m):
-    return NOMBRES.get(m, m.replace("propuesto_l", "Propuesto λ="))
+    return NOMBRES.get(m, m.replace("propuesto_l", "Propuesto λ=").replace("ev_b", "EV β=").replace("recorte_M", "Recorte M="))
 
 
 def escribir_csv(path, filas, cols):
@@ -644,11 +726,26 @@ def guardar(R, args):
                         **{f"rank_{m}": R["rank"][m] for m in R["modelos"]})
     if 10 in args.ks:
         figura_tradeoff(R, 10)
+    if R.get("seleccion") is not None:
+        sel_f = [dict(f, K=args.k_sel) for f in R["seleccion"]["filas"]]
+        escribir_csv(TAB / "activo_seleccion.csv", sel_f,
+                     ["familia", "param", "K", "recall", "valor", "cumple_tol", "elegido"])
+        K_fig = 10 if 10 in args.ks else sorted(args.ks)[0]
+        curvas = {
+            "percentiles (original)": ["ltr"] + [f"propuesto_l{l:g}" for l in sorted(R["lams"], reverse=True)] + ["consenso"],
+            "utilidad esperada (β)": ["ltr"] + [f"ev_b{b:g}" for b in sorted(args.betas)] + ["valor"],
+            "recorte por afinidad (M)": ["ltr"] + [f"recorte_M{m}" for m in sorted(args.recortes)] + ["valor"],
+        }
+        el_ = R["seleccion"]["elegido"]
+        etq_ = {"activo_ev": f"β*={el_['ev']:g}", "activo_recorte": f"M*={el_['recorte']:g}", "activo_pct": f"λ*={el_['pct']:g}"}
+        act.figura_pareto(R["filas"], curvas, K_fig, FIG / "fig8_pareto_activo.png", FIG / "fig8_pareto_activo.pdf", elegidos=etq_)
+        act.figura_paneles(R["filas"], curvas, K_fig, FIG / "fig9_paneles_activo.png", FIG / "fig9_paneles_activo.pdf", elegidos=etq_)
+        log("figuras/fig8_pareto_activo.png y fig9_paneles_activo.png")
 
     print("\n" + "=" * 96)
     for K in sorted(args.ks):
         print(f"\nK = {K}")
-        print(f"{'modelo':<22}{'Recall':>9}{'NDCG':>9}{'Cobert.':>9}{'AporteMin':>11}{'RedVar':>10}")
+        print(f"{'modelo':<22}{'Recall':>9}{'NDCG':>9}{'Cobert.':>9}{'AporteMin':>11}{'RedVar':>10}{'ValorDec':>11}")
         for f in R["filas"]:
             if f["K"] != K:
                 continue
@@ -656,7 +753,7 @@ def guardar(R, args):
             nd = f"{f['ndcg']:.4f}" if "ndcg" in f else "-"
             co = f"{f['cobertura']:.3f}" if "cobertura" in f else "-"
             print(f"{nombre(f['modelo']):<22}{rec:>9}{nd:>9}{co:>9}{f['aporte_minoria']:>11.4f}"
-                  f"{f['reduccion_var']:>10.4f}")
+                  f"{f['reduccion_var']:>10.4f}{f.get('valor_decision', float('nan')):>11.2e}")
     log("Listo. tablas/midterm_*.csv")
 
 
