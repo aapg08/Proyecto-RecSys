@@ -1,0 +1,23 @@
+\begin{table}[ht]
+\centering
+\footnotesize
+\caption{Recomendador multiobjetivo en el conjunto de prueba ($K=10$). $^*$: punto elegido en validación. Aporte = AporteMinoría. En negrita el mejor valor por columna (sin contar el flujo observado).}
+\label{tab:activo_principal}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l cccccc@{}}
+\toprule
+\textbf{Modelo} & \textbf{Recall@10} & \textbf{NDCG@10} & \textbf{Cobertura} & \textbf{Aporte} & \shortstack{\textbf{$\Delta$Var}\\($\times10^{-3}$)} & \shortstack{\textbf{$V$}\\($\times10^{-3}$)} \\ \midrule
+Random & 0{,}0060 & 0{,}0028 & \textbf{0{,}9631} & 0{,}5001 & 1{,}774 & 5{,}559 \\
+LTR & \textbf{0{,}3009} & \textbf{0{,}1707} & 0{,}3291 & 0{,}4711 & 0{,}440 & 1{,}635 \\
+\midrule
+Percentiles ($\lambda=0{,}9$, orig.) & 0{,}0701 & 0{,}0321 & 0{,}7317 & 0{,}6760 & \textbf{2{,}460} & 6{,}773 \\
+Percentiles ($\lambda^*=0{,}99$) & 0{,}2864 & 0{,}1374 & 0{,}4110 & 0{,}5037 & 0{,}691 & 2{,}318 \\
+Recorte ($M^*=15$) & 0{,}2530 & 0{,}1075 & 0{,}3906 & 0{,}4781 & 0{,}625 & 2{,}508 \\
+\textbf{EV} ($\beta^*=0{,}1$) & 0{,}2932 & 0{,}1624 & 0{,}3799 & 0{,}4916 & 0{,}602 & 2{,}881 \\
+EV ($\beta=0{,}4$; no elegido) & 0{,}1936 & 0{,}1003 & 0{,}5034 & 0{,}5883 & 1{,}177 & 7{,}882 \\
+Valor $V$ puro & 0{,}0015 & 0{,}0007 & 0{,}1134 & \textbf{0{,}8722} & 2{,}429 & \textbf{28{,}391} \\
+\midrule
+Flujo observado (X) & --- & --- & --- & 0{,}3251 & 0{,}497 & 1{,}731 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -6,7 +6,7 @@ bloque,dato,valor
 "val (entrenamiento LTR)",perdidos_por_nota_decidida,271079
 "val (entrenamiento LTR)",pct_perdidos_por_nota_decidida,0.0889
 "val (entrenamiento LTR)",eventos,40000
-"val (entrenamiento LTR)",evaluadores,37800
+"val (entrenamiento LTR)",evaluadores,37821
 "test",evaluaciones_periodo,8414916
 "test",de_evaluadores_con_historial,7247616
 "test",en_ventana,6336052
@@ -14,11 +14,20 @@ bloque,dato,valor
 "test",perdidos_por_nota_decidida,610281
 "test",pct_perdidos_por_nota_decidida,0.0963
 "test",eventos,100000
-"test",evaluadores,88768
+"test",evaluadores,88755
 "ltr",filas_entrenamiento,840000
-"ltr",auc_validacion,0.9366
-"ltr",iteraciones,242
+"ltr",auc_validacion,0.9315
+"ltr",iteraciones,189
 "ltr",features,log_pop log_pop_1h edad_h sim_tfidf sim_emb escritura log_hist
+"activo",eventos_seleccion,3000
+"activo",k_sel,10
+"activo",tol_afinidad,0.9000
+"activo",T_calibracion,1.0000
+"activo",beta_elegido,0.1000
+"activo",recorte_elegido,15.0000
+"activo",lambda_elegido,0.9900
+"activo",recall_ltr_validacion,0.2703
+"activo",umbral_crh,0.1386
 "test_resumen",candidatas_mediana,1718.0000
-"test_resumen",candidatas_media,1739.5204
+"test_resumen",candidatas_media,1740.7275
 "test_resumen",random_recall10_esperado,0.0059
