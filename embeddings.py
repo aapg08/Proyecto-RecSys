@@ -12,8 +12,6 @@ Uso (después de split_data.py):
 En CPU puede tardar del orden de una hora. Se guarda por partes en data/midterm/emb_partes/:
 si se interrumpe, al volver a correrlo continúa donde quedó.
 
-Salidas: data/midterm/embeddings.npy       (float16, una fila por nota, vectores de norma 1)
-         data/midterm/embeddings_ids.parquet (noteId en el mismo orden)
 """
 
 import argparse

@@ -1,14 +1,15 @@
 """
-Prepara el subconjunto de Community Notes para H1.
+Prepara el subconjunto de Community Notes
+
+Primer código que se corre
 
 Uso:
-  1. Creen la carpeta data/raw/ (al lado de este script) y pongan ahí TODOS los .zip
-     descargados (notas, ratings, historial de estados, enrollment). No los descompriman.
+  1. Crear la carpeta data/raw/ (al lado de este script) y poner ahí TODOS los .zip
+     descargados (notas, ratings, historial de estados, enrollment). No los descomprimir.
   2. pip install -U polars
   3. python preparar_datos.py
 
-Procesa un archivo a la vez: descomprime, filtra y (opcionalmente) borra el .tsv,
-así no necesitan RAM ni disco para el dataset completo.
+Opcionalmente borra el .tsv,
 
 Resultado en data/subset/:
   notes.parquet, ratings/*.parquet, noteStatusHistory.parquet, userEnrollment.parquet

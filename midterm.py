@@ -1,7 +1,6 @@
 """
-Midterm (H2): baseline entrenado, término de consenso y recomendador multiobjetivo.
+Baseline entrenado, término de consenso y recomendador multiobjetivo.
 
-Usa EXACTAMENTE el protocolo de baselines.py (H1) y agrega:
 
   ltr        Baseline entrenado (learning-to-rank puntual, HistGradientBoosting). Puede puntuar
              notas nuevas porque solo usa atributos de la nota y del evaluador, no un id:

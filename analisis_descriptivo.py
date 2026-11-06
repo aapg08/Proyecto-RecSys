@@ -1,6 +1,4 @@
 """
-
-Uso (después de preparar_datos.py, en la misma carpeta):
   pip install -U polars matplotlib numpy
   python analisis_descriptivo.py
 
@@ -8,8 +6,8 @@ Salidas:
   data/subset/interacciones.parquet   u, i, t, y  (ids enteros, ~10x más liviano)
   data/subset/map_raters.parquet      raterParticipantId <-> u
   data/subset/map_notes.parquet       noteId <-> i (ordenado por fecha de creación)
-  tablas/resumen.csv                  números para el informe
-  figuras/*.png y *.pdf               figuras para el informe
+  tablas/resumen.csv                  
+  figuras/*.png y *.pdf              
 """
 
 from datetime import datetime, timezone
