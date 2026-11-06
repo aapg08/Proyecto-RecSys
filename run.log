@@ -1,0 +1,6 @@
+[     1s] notas train 340,243 | test 112,557 | inicio test 2025-05-01T00:00:53.880
+[     2s] ratings test: 8,414,916
+[     4s] evaluadores con >= 10 evaluaciones en train: 359,836
+[     4s] ratings de test hechos por evaluadores sin historial suficiente (excluidos): 1,167,300 (13.9%)
+[     4s] eventos de evaluadores warm: 7,247,616 -> en ventana 6,336,052 -> también pendientes 5,725,771
+[     5s] eventos evaluados: 100,000 de 88,868 evaluadores

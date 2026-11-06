@@ -37,13 +37,14 @@ CRH_THR, CRNH_I, CRNH_M = 0.40, -0.05, -0.8         # reglas de estado de X (not
 class EstadoNotas:
     """Estadísticos suficientes de la ridge 2x2 de cada nota. A = M (como en midterm.py) y b = Σ x r."""
 
-    def __init__(self, n, lam_b, lam_g, sigma2, prior_scale=1.0):
+    def __init__(self, n, lam_b, lam_g, sigma2, prior_scale=1.0, umbral_crh=CRH_THR):
         self.a00 = np.full(n, lam_b * prior_scale)
         self.a01 = np.zeros(n)
         self.a11 = np.full(n, lam_g * prior_scale)
         self.b0 = np.zeros(n)
         self.b1 = np.zeros(n)
         self.sigma2 = sigma2
+        self.umbral_crh = umbral_crh      # umbral 'Útil' en la escala del modelo propio (postura.py lo calibra)
 
     def add(self, g, f, r):
         """g: notas, f: postura del evaluador, r = y - mu - b_u. Solo evaluadores con postura conocida."""
@@ -69,9 +70,10 @@ def valor_decision(est, cand, f_u):
     c00 = np.maximum(c00, 1e-18)
     s = np.sqrt(c00)
     thr_l = CRNH_I + CRNH_M * np.abs(m_g)
-    p_hi = 1.0 - ndtr((CRH_THR - m_b) / s)
+    thr_h = est.umbral_crh
+    p_hi = 1.0 - ndtr((thr_h - m_b) / s)
     p_lo = ndtr((thr_l - m_b) / s)
-    riesgo = np.where(m_b >= CRH_THR, 1.0 - p_hi, np.where(m_b <= thr_l, 1.0 - p_lo, p_hi + p_lo))
+    riesgo = np.where(m_b >= thr_h, 1.0 - p_hi, np.where(m_b <= thr_l, 1.0 - p_lo, p_hi + p_lo))
     sx0 = c00 + c01 * f_u
     xsx = c00 + 2.0 * f_u * c01 + f_u * f_u * c11
     ganancia = (sx0 * sx0 / (est.sigma2 + xsx)) / c00

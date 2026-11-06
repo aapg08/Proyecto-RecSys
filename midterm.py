@@ -1,6 +1,7 @@
 """
-Baseline entrenado, término de consenso y recomendador multiobjetivo.
+Midterm (H2): baseline entrenado, término de consenso y recomendador multiobjetivo.
 
+Usa EXACTAMENTE el protocolo de baselines.py (H1) y agrega:
 
   ltr        Baseline entrenado (learning-to-rank puntual, HistGradientBoosting). Puede puntuar
              notas nuevas porque solo usa atributos de la nota y del evaluador, no un id:
@@ -100,6 +101,8 @@ def parse_args(argv=None):
     ap.add_argument("--max-sel-events", type=int, default=3000, help="eventos de validación (no usados para entrenar) para elegir")
     ap.add_argument("--eps-rel", type=float, default=0.01, help="piso relativo del valor en log(V + eps)")
     ap.add_argument("--prior-scale", type=float, default=1.0, help="multiplica la ridge de cada nota en el estado de activo.py")
+    ap.add_argument("--umbral-crh", type=float, default=None,
+                    help="umbral 'Útil' del riesgo de decisión; por defecto el calibrado de postura_meta.json (si no existe, 0.40)")
     ap.add_argument("--include-decided", action="store_true")
     ap.add_argument("--sin-embeddings", action="store_true")
     ap.add_argument("--chunk", type=int, default=400, help="eventos por lote de predicción")
@@ -208,6 +211,7 @@ class Datos:
             warm_test=warm(t_split), warm_val=warm(t_val),
             post_r=post["r"].to_numpy(), post_f=post["f_u"].to_numpy(), post_b=post["b_u"].to_numpy(),
             s_y=stream["y"].to_numpy(), mu=meta["mu"], sigma2=meta["rmse"] ** 2,
+            umbral_crh=meta.get("umbral_util_calibrado"),
             lam_b=meta["mult_intercepto"] * meta["lam_n"], lam_g=meta["lam_n"], E=E,
         )
 
@@ -285,7 +289,10 @@ def experimento(D, historial, args):
         b_stream = buscar(D["post_r"], D["post_b"], s_r)
         known = np.isin(s_r, D["post_r"]) & ~np.isnan(D["s_y"])
         r_stream = np.where(known, D["s_y"] - D["mu"] - b_stream, 0.0)
-        est = act.EstadoNotas(N, D["lam_b"], D["lam_g"], D["sigma2"], args.prior_scale)
+        umbral = args.umbral_crh if args.umbral_crh is not None else (D["umbral_crh"] if D["umbral_crh"] is not None else 0.40)
+        log(f"recomendador activo: umbral CRH del riesgo de decisión = {umbral:.3f} "
+            f"({'argumento' if args.umbral_crh is not None else 'calibrado en postura.py' if D['umbral_crh'] is not None else 'valor de X'})")
+        est = act.EstadoNotas(N, D["lam_b"], D["lam_g"], D["sigma2"], args.prior_scale, umbral)
     log(f"notas {N:,} | val desde {np.datetime64(T_VAL, 'ms')} | test desde {np.datetime64(T_SPLIT, 'ms')}")
     log(f"evaluaciones en el flujo (abril + test): {len(s_t):,} | con postura conocida: {(f_stream != 0).mean():.1%}")
     log(f"regularización del término de consenso: lam_b = {LB:.2f}, lam_g = {LG:.2f}")
@@ -514,7 +521,7 @@ def experimento(D, historial, args):
         el = sel_res["elegido"]
         protocolo["activo"] = dict(eventos_seleccion=len(sel), k_sel=args.k_sel, tol_afinidad=args.tol_afinidad,
                                    T_calibracion=sel_res["T"], beta_elegido=el["ev"], recorte_elegido=el["recorte"],
-                                   lambda_elegido=el["pct"], recall_ltr_validacion=sel_res["recall_ltr_val"])
+                                   lambda_elegido=el["pct"], recall_ltr_validacion=sel_res["recall_ltr_val"], umbral_crh=umbral)
         log(f"punto de operación elegido en validación: ev β={el['ev']:g} | recorte M={el['recorte']:g} | pct λ={el['pct']:g} "
             f"| T={sel_res['T']:g}")
         del sel
